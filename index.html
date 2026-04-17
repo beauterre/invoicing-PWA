@@ -1,0 +1,429 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Invoice App</title>
+
+<style>
+body {
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  margin: 0;
+  background: #f4f5f7;
+  color: #111;
+}
+input, textarea, select {
+  box-sizing: border-box;
+}
+
+.app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* top header feel */
+h1, h2 {
+  margin: 0 0 10px 0;
+}
+
+/* sections as cards */
+section {
+  display: none;
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.06);
+  margin-top: 20px;
+}
+
+section.active {
+  display: block;
+}
+
+/* buttons */
+button {
+  background: #2b2f36;
+  color: white;
+  border: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin: 5px 5px 5px 0;
+}
+
+button:hover {
+  background: #1f2329;
+}
+
+/* table */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+th {
+  text-align: left;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #666;
+  padding: 10px;
+}
+
+td {
+  padding: 10px;
+  border-top: 1px solid #eee;
+}
+
+tr:hover {
+  background: #f7f8fa;
+  cursor: pointer;
+}
+
+/* form styling */
+input, textarea, select {
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+  margin: 6px 0 12px;
+  font-size: 14px;
+}
+
+/* work rows */
+.work-row {
+  display: grid;
+  grid-template-columns: 3fr 1fr 1fr auto;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.work-row input {
+  margin: 0;
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="app">
+<!-- START -->
+<section id="start" class="active">
+  <h1>Invoice App</h1>
+  This will be put in clipboard to help you select the data folder:  <input id="pathHint"
+    value="D:\\xampp\\htdocs\\projects\\facturen\\data"
+    style="width:100%; margin: 10px 0;"
+  /> when you click..<br>
+  So to start, please hit start, ctrl-v and "Map Selecteren"..<br>
+  <button onclick="initApp()">Start</button>
+</section>
+
+<!-- LIST -->
+<section id="list">
+  <h2>Invoices</h2>
+  <button onclick="loadInvoices()">Reload</button>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Project</th>
+        <th>Client</th>
+        <th>Total</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody id="invoiceTable"></tbody>
+  </table>
+</section>
+
+<!-- DETAIL -->
+<section id="detail">
+  <button onclick="showOnlySection('list')">← Back</button>
+  <button onclick="openEdit()">Edit</button>
+
+  <h2>Invoice Detail</h2>
+  <div id="detailBox"></div>
+
+  <button onclick="downloadPDF()">Download PDF</button>
+</section>
+
+<!-- EDIT -->
+<section id="edit">
+  <button onclick="showOnlySection('detail')">← Back</button>
+  <h2>Edit Invoice</h2>
+
+  <label>Project</label>
+  <input id="edit_project">
+
+  <label>Client</label>
+  <select id="edit_client"></select>
+
+  <label>Description</label>
+  <textarea id="edit_desc"></textarea>
+
+  <label>Status</label>
+  <select id="edit_status">
+    <option value="openstaand">openstaand</option>
+    <option value="sent">sent</option>
+    <option value="paid">paid</option>
+    <option value="betaald">betaald</option>
+    <option value="credit">credit</option>
+  </select>
+
+  <h3>Work items</h3>
+  <div id="workList"></div>
+  <button onclick="addWorkItem()">+ Add item</button>
+
+  <br><br>
+  <button onclick="saveInvoice()">Save</button>
+</section>
+
+<script>
+let directoryHandle = null;
+let invoices = [];
+let clients = [];
+let currentInvoice = null;
+
+/* ---------------- navigation ---------------- */
+function showOnlySection(id) {
+  document.querySelectorAll("section").forEach(s => s.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+}
+
+/* ---------------- init ---------------- */
+async function initApp() {
+ navigator.clipboard.writeText("D:\\xampp\\htdocs\\projects\\facturen\\data");
+  if (directoryHandle) {
+    const permission = await directoryHandle.requestPermission({ mode: "readwrite" });
+    if (permission === "granted") {
+      await loadClients();
+      await loadInvoices();
+      showOnlySection("list");
+      return;
+    }
+  }
+
+  directoryHandle = await window.showDirectoryPicker();
+  await loadClients();
+  await loadInvoices();
+  showOnlySection("list");
+}
+
+/* ---------------- clients ---------------- */
+async function loadClients() {
+  clients = [];
+
+  const folder = await directoryHandle.getDirectoryHandle("klanten");
+
+  for await (const entry of folder.values()) {
+    if (!entry.name.endsWith(".json")) continue;
+
+    const file = await entry.getFile();
+    const json = JSON.parse(await file.text());
+
+    clients.push({
+      id: entry.name.replace(".json",""),
+      name: json.name || entry.name
+    });
+  }
+
+  const sel = document.getElementById("edit_client");
+  sel.innerHTML = clients.map(c =>
+    `<option value="${c.id}">${c.name}</option>`
+  ).join("");
+}
+
+/* ---------------- helpers ---------------- */
+function formatProjectName(filename) {
+  return filename
+    .replace(/\.json$/, "")
+    .replace(/^\d{4}-\d+_/, "")
+    .replace(/_/g, " ")
+    .replace(/-/g, " ");
+}
+
+/* ---------------- load invoices ---------------- */
+async function loadInvoices() {
+  invoices = [];
+
+  const folder = await directoryHandle.getDirectoryHandle("facturen");
+
+  for await (const entry of folder.values()) {
+    if (!entry.name.endsWith(".json")) continue;
+
+    const file = await entry.getFile();
+    const json = JSON.parse(await file.text());
+
+    invoices.push({
+      id: entry.name.replace(".json",""),
+      fileName: entry.name,
+      projectName: formatProjectName(entry.name),
+      ...json
+    });
+  }
+
+  renderList();
+}
+
+/* ---------------- list ---------------- */
+function renderList() {
+  const tbody = document.getElementById("invoiceTable");
+  tbody.innerHTML = "";
+
+  invoices.sort((a,b) => (b.created||0)-(a.created||0));
+
+  for (const inv of invoices) {
+    const date = inv.created
+      ? new Date(inv.created*1000).toISOString().slice(0,10)
+      : "-";
+
+    const total = ((inv.total||0)/100).toFixed(2);
+
+    const tr = document.createElement("tr");
+    tr.className = "invoice-row";
+
+    tr.innerHTML = `
+      <td>${date}</td>
+      <td>${inv.projectName}</td>
+      <td>${inv.client || "-"}</td>
+      <td>€ ${total}</td>
+      <td>${inv.status || "-"}</td>
+    `;
+
+    tr.onclick = () => openInvoice(inv.id);
+    tbody.appendChild(tr);
+  }
+}
+
+/* ---------------- detail ---------------- */
+function openInvoice(id) {
+  currentInvoice = invoices.find(i => i.id === id);
+
+  const items = (currentInvoice.werkzaamheden || [])
+    .map(w => `
+      <tr>
+        <td>${w.desc}</td>
+        <td>€ ${(w.amount/100).toFixed(2)}</td>
+        <td>${w.qty || 1}</td>
+      </tr>
+    `).join("");
+
+  document.getElementById("detailBox").innerHTML = `
+    <p><b>Project:</b> ${currentInvoice.projectName}</p>
+    <p><b>Client:</b> ${currentInvoice.client}</p>
+    <p><b>Status:</b> ${currentInvoice.status}</p>
+    <p><b>Total:</b> € ${((currentInvoice.total||0)/100).toFixed(2)}</p>
+
+    <h3>Work</h3>
+    <table>
+      ${items}
+    </table>
+  `;
+
+  showOnlySection("detail");
+}
+
+/* ---------------- edit ---------------- */
+function openEdit() {
+  document.getElementById("edit_project").value =
+    currentInvoice.fileName.replace(".json","");
+
+  document.getElementById("edit_client").value =
+    currentInvoice.client || "";
+
+  document.getElementById("edit_desc").value =
+    currentInvoice.desc || "";
+
+  document.getElementById("edit_status").value =
+    currentInvoice.status || "openstaand";
+
+  renderWorkItems();
+
+  showOnlySection("edit");
+}
+
+/* ---------------- work items CRUD ---------------- */
+function renderWorkItems() {
+  const list = document.getElementById("workList");
+  const items = currentInvoice.werkzaamheden || [];
+
+  list.innerHTML = items.map((w,i) => `
+    <div class="work-row">
+      <input value="${w.desc}" onchange="updateWork(${i},'desc',this.value)">
+      <input type="number" value="${w.amount/100}" onchange="updateWork(${i},'amount',this.value)">
+      <input type="number" value="${w.qty||1}" onchange="updateWork(${i},'qty',this.value)">
+      <button onclick="removeWork(${i})">X</button>
+    </div>
+  `).join("");
+}
+
+function addWorkItem() {
+  if (!currentInvoice.werkzaamheden) currentInvoice.werkzaamheden = [];
+
+  currentInvoice.werkzaamheden.push({
+    desc: "",
+    amount: 0,
+    qty: 1
+  });
+
+  renderWorkItems();
+}
+
+function updateWork(i, key, val) {
+  const item = currentInvoice.werkzaamheden[i];
+
+  if (key === "amount") item.amount = Math.round(parseFloat(val)*100);
+  else if (key === "qty") item.qty = parseFloat(val);
+  else item[key] = val;
+}
+
+function removeWork(i) {
+  currentInvoice.werkzaamheden.splice(i,1);
+  renderWorkItems();
+}
+
+/* ---------------- save ---------------- */
+async function saveInvoice() {
+
+  const fileNameBase = document.getElementById("edit_project").value;
+
+  const werkzaamheden = currentInvoice.werkzaamheden || [];
+
+  const total = werkzaamheden.reduce((sum,w) =>
+    sum + ((w.amount||0) * (w.qty||1)), 0
+  );
+
+  const updated = {
+    ...currentInvoice,
+    client: document.getElementById("edit_client").value,
+    desc: document.getElementById("edit_desc").value,
+    status: document.getElementById("edit_status").value,
+    werkzaamheden,
+    total
+  };
+
+  const folder = await directoryHandle.getDirectoryHandle("facturen");
+  const fileHandle = await folder.getFileHandle(currentInvoice.fileName, { create:false });
+
+  const writable = await fileHandle.createWritable();
+  await writable.write(JSON.stringify(updated,null,2));
+  await writable.close();
+
+  currentInvoice = updated;
+  await loadInvoices();
+
+  showOnlySection("detail");
+}
+
+/* ---------------- download ---------------- */
+function downloadPDF() {
+  const url = `http://localhost/projects/facturen/download.php?id=${currentInvoice.id}`;
+  window.open(url, "_blank");
+}
+</script>
+</div>
+
+</body>
+</html>
